@@ -3,6 +3,7 @@ name = "wattivahti-influx"
 version = "0.1.0"
 description = "Sync electricity consumption data from WattiVahti API to InfluxDB"
 requires-python = ">=3.10"
+license = { text = "MIT" }
 dependencies = [
     "b2c-oauth-client",
     "influxdb-client",
