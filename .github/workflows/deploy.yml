@@ -24,13 +24,13 @@ jobs:
           version: "latest"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --extra dev
 
       - name: Run linting
         run: uv run ruff check .
 
       - name: Run type checking
-        run: uv run ty .
+        run: uv run ty check sync.py
 
       - name: Deploy application files
         run: |

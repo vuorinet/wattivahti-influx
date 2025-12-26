@@ -10,6 +10,12 @@ dependencies = [
     "requests",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "ty",
+    "ruff",
+]
+
 [project.scripts]
 sync = "sync:main"
 
@@ -29,5 +35,5 @@ select = ["E", "F", "I", "N", "W", "UP"]
 ignore = []
 
 [tool.ty]
-strict = true
+# Type checking configuration
 
