@@ -1,0 +1,88 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    environment: production
+
+    env:
+      DEPLOY_PATH: /srv/wattivahti-influx
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run linting
+        run: uv run ruff check .
+
+      - name: Run type checking
+        run: uv run ty .
+
+      - name: Deploy application files
+        run: |
+          # Copy application files to target server
+          rsync -av --delete \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='refresh_token.txt' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            ./ ${{ env.DEPLOY_PATH }}/
+
+      - name: Create .env file
+        run: |
+          INITIAL_SYNC_DAYS="${{ vars.INITIAL_SYNC_DAYS }}"
+          SYNC_BUFFER_HOURS="${{ vars.SYNC_BUFFER_HOURS }}"
+          INITIAL_SYNC_DAYS=${INITIAL_SYNC_DAYS:-7}
+          SYNC_BUFFER_HOURS=${SYNC_BUFFER_HOURS:-2}
+
+          cat > ${{ env.DEPLOY_PATH }}/.env << EOF
+          INFLUXDB_URL=${{ vars.INFLUXDB_URL }}
+          INFLUXDB_TOKEN=${{ secrets.INFLUXDB_TOKEN }}
+          INFLUXDB_ORG=${{ vars.INFLUXDB_ORG }}
+          INFLUXDB_BUCKET=${{ vars.INFLUXDB_BUCKET }}
+          WATTIVAHTI_METERING_POINT=${{ vars.WATTIVAHTI_METERING_POINT }}
+          REFRESH_TOKEN_FILE=${{ env.DEPLOY_PATH }}/refresh_token.txt
+          INITIAL_SYNC_DAYS=${INITIAL_SYNC_DAYS}
+          SYNC_BUFFER_HOURS=${SYNC_BUFFER_HOURS}
+          EOF
+
+      - name: Set up cron job
+        run: |
+          # Ensure uv is in PATH for cron
+          UV_PATH=$(which uv)
+
+          # Create cron job entry
+          CRON_ENTRY="0 * * * * cd ${{ env.DEPLOY_PATH }} && $UV_PATH run sync.py >> ${{ env.DEPLOY_PATH }}/sync.log 2>&1"
+
+          # Check if cron job already exists
+          if crontab -l 2>/dev/null | grep -q "sync.py"; then
+            # Update existing cron job
+            crontab -l 2>/dev/null | sed "s|.*sync.py.*|$CRON_ENTRY|" | crontab -
+            echo "Updated existing cron job"
+          else
+            # Add new cron job
+            (crontab -l 2>/dev/null; echo "$CRON_ENTRY") | crontab -
+            echo "Added new cron job"
+          fi
+
+      - name: Verify deployment
+        run: |
+          echo "Deployment completed successfully"
+          echo "Application path: ${{ env.DEPLOY_PATH }}"
+          echo "Cron job status:"
+          crontab -l | grep sync.py || echo "No cron job found"

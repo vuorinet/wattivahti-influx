@@ -1,0 +1,26 @@
+# Local development only - not used in production
+version: "3.8"
+
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: wattivahti-influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_PASSWORD:-changeme}
+      - DOCKER_INFLUXDB_INIT_ORG=wattivahti
+      - DOCKER_INFLUXDB_INIT_BUCKET=electricity
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=wattivahti-dev-token-local-only
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  influxdb-data:
