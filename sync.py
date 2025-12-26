@@ -24,12 +24,8 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 WATTIVAHTI_TENANT = "pesv.onmicrosoft.com"
 WATTIVAHTI_CLIENT_ID = "84ebdb93-9ea6-42c7-bd7d-302abf7556fa"
 WATTIVAHTI_POLICY = "B2C_1_Tunnistus_SignInv2"
-WATTIVAHTI_SCOPE = (
-    "https://pesv.onmicrosoft.com/salpa/customer.read openid profile offline_access"
-)
-WATTIVAHTI_API_BASE = (
-    "https://porienergia-prod-agent.frendsapp.com:9999/api/onlineapi/v1"
-)
+WATTIVAHTI_SCOPE = "https://pesv.onmicrosoft.com/salpa/customer.read openid profile offline_access"
+WATTIVAHTI_API_BASE = "https://porienergia-prod-agent.frendsapp.com:9999/api/onlineapi/v1"
 FINNISH_TIMEZONE = ZoneInfo("Europe/Helsinki")
 
 # Configure logging
@@ -193,9 +189,7 @@ def fetch_consumption_data(
         response = session.get(url, params=params, timeout=30)
 
         if response.status_code != 200:
-            raise Exception(
-                f"API request failed: {response.status_code} - {response.text[:200]}"
-            )
+            raise Exception(f"API request failed: {response.status_code} - {response.text[:200]}")
 
         return response.json()
 
@@ -322,7 +316,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--start-date",
-        help="Start date (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS). If not provided, uses latest timestamp from InfluxDB.",
+        help=(
+            "Start date (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS). "
+            "If not provided, uses latest timestamp from InfluxDB."
+        ),
     )
     parser.add_argument(
         "--end-date",
@@ -350,8 +347,10 @@ def main() -> None:
     except AuthenticationError as e:
         error_msg = (
             f"Authentication failed: {e}\n"
-            f"Please check your refresh token in: {Path(config['refresh_token_file']).absolute()}\n"
-            f"If the token is expired, you need to obtain a new refresh token and write it to the file."
+            f"Please check your refresh token in: "
+            f"{Path(config['refresh_token_file']).absolute()}\n"
+            f"If the token is expired, you need to obtain a new refresh token "
+            f"and write it to the file."
         )
         logger.error(error_msg)
         sys.exit(1)
@@ -368,7 +367,9 @@ def main() -> None:
         # Manual mode: use provided dates
         logger.info("Using manual date range")
         start_dt = parse_date_string(args.start_date)
-        end_dt = parse_date_string(args.end_date) if args.end_date else datetime.now(FINNISH_TIMEZONE)
+        end_dt = (
+            parse_date_string(args.end_date) if args.end_date else datetime.now(FINNISH_TIMEZONE)
+        )
     else:
         # Incremental mode: query InfluxDB for latest timestamp
         logger.info("Using incremental sync mode")
@@ -389,11 +390,10 @@ def main() -> None:
             )
         else:
             # No data exists, use initial sync days
-            start_dt = datetime.now(FINNISH_TIMEZONE) - timedelta(
-                days=config["initial_sync_days"]
-            )
+            start_dt = datetime.now(FINNISH_TIMEZONE) - timedelta(days=config["initial_sync_days"])
             logger.info(
-                f"No existing data, fetching last {config['initial_sync_days']} days from {start_dt.isoformat()}"
+                f"No existing data, fetching last {config['initial_sync_days']} days "
+                f"from {start_dt.isoformat()}"
             )
 
         end_dt = datetime.now(FINNISH_TIMEZONE)
@@ -426,4 +426,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
