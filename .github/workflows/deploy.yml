@@ -34,6 +34,16 @@ jobs:
 
       - name: Deploy application files
         run: |
+          # Backup existing refresh token before deployment
+          if [ -f ${{ env.DEPLOY_PATH }}/refresh_token.txt ]; then
+            TMP_TOKEN=$(mktemp)
+            cp ${{ env.DEPLOY_PATH }}/refresh_token.txt "$TMP_TOKEN"
+            echo "Backed up refresh_token.txt"
+          else
+            TMP_TOKEN=""
+            echo "No existing refresh_token.txt found"
+          fi
+
           # Copy application files to target server
           rsync -aq --delete \
             --exclude='.git' \
@@ -42,6 +52,13 @@ jobs:
             --exclude='__pycache__' \
             --exclude='*.pyc' \
             ./ ${{ env.DEPLOY_PATH }}/
+
+          # Restore refresh token if it existed
+          if [ -n "$TMP_TOKEN" ] && [ -f "$TMP_TOKEN" ]; then
+            cp "$TMP_TOKEN" ${{ env.DEPLOY_PATH }}/refresh_token.txt
+            rm "$TMP_TOKEN"
+            echo "Restored refresh_token.txt"
+          fi
 
       - name: Create .env file
         run: |
