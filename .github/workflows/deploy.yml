@@ -35,7 +35,7 @@ jobs:
       - name: Deploy application files
         run: |
           # Copy application files to target server
-          rsync -av --delete \
+          rsync -aq --delete \
             --exclude='.git' \
             --exclude='.env' \
             --exclude='refresh_token.txt' \
