@@ -83,10 +83,11 @@ jobs:
           DEPLOY_PATH="${{ env.DEPLOY_PATH }}"
 
           # Create wrapper script to avoid long cron line
+          # Use Python from venv since cron doesn't have uv in PATH
           cat > "$DEPLOY_PATH/run_sync.sh" << 'WRAPPER_EOF'
           #!/bin/bash
           cd "$(dirname "$0")"
-          uv run sync.py >> sync.log 2>&1
+          .venv/bin/python sync.py >> sync.log 2>&1
           WRAPPER_EOF
           chmod +x "$DEPLOY_PATH/run_sync.sh"
 
