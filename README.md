@@ -86,6 +86,7 @@ uv run sync.py --start-date 2024-01-01T00:00:00 --end-date 2024-01-31T23:59:59
 - **Measurement**: `electricity_consumption`
 - **Fields**:
   - `consumption_kwh` (float) - Electricity consumption in kWh
+  - `consumption_wh` (float) - Electricity consumption in Wh
   - `resolution` (string) - Data resolution: `PT15MIN` or `PT1H`
 - **Tags**:
   - `metering_point` (string) - Metering point code

@@ -222,10 +222,12 @@ def parse_consumption_data(api_response: dict) -> list[dict]:
                 else:
                     timestamp = timestamp.astimezone(FINNISH_TIMEZONE)
 
+                consumption_kwh = float(consumption)
                 readings.append(
                     {
                         "timestamp": timestamp,
-                        "consumption_kwh": float(consumption),
+                        "consumption_kwh": consumption_kwh,
+                        "consumption_wh": consumption_kwh * 1000,  # Convert kWh to Wh
                         "unit": item.get("unit", "kWh"),
                     }
                 )
@@ -296,6 +298,7 @@ def write_to_influxdb(
             Point("electricity_consumption")
             .tag("metering_point", metering_point)
             .field("consumption_kwh", reading["consumption_kwh"])
+            .field("consumption_wh", reading["consumption_wh"])
             .field("resolution", resolution)
             .time(reading["timestamp"])
         )
