@@ -186,7 +186,7 @@ def fetch_consumption_data(
             f"Fetching data from {start_date.isoformat()} to {end_date.isoformat()} "
             f"with resolution {resolution}"
         )
-        response = session.get(url, params=params, timeout=30)
+        response = session.get(url, params=params)
 
         if response.status_code != 200:
             raise Exception(f"API request failed: {response.status_code} - {response.text[:200]}")
