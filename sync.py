@@ -395,47 +395,69 @@ def parse_consumption_data(api_response: dict) -> list[dict]:
                 # Track hour 03:00 occurrences separately
                 hour_03_count = len(data_by_date[target_date].get(3, []))
 
-                logger.info(
-                    f"Found {hour_03_count} records for hour 03:00 on {target_date}"
-                )
+                logger.info(f"Found {hour_03_count} records for hour 03:00 on {target_date}")
 
                 for hour in sorted(data_by_date[target_date].keys()):
                     items = data_by_date[target_date][hour]
 
                     if hour == 3:
                         # Process repeated hour with correct fold values
-                        # The API should return these in chronological order:
-                        # - First 4 records: fold=0 (EEST, UTC+3, before transition)
-                        # - Next 4 records: fold=1 (EET, UTC+2, after transition)
+                        # IMPORTANT: The API returns data as PAIRS (consecutive records
+                        # for the same minute):
+                        # - Records 0,1: 03:00 (first occurrence, second occurrence)
+                        # - Records 2,3: 03:15 (first occurrence, second occurrence)
+                        # - Records 4,5: 03:30 (first occurrence, second occurrence)
+                        # - Records 6,7: 03:45 (first occurrence, second occurrence)
 
                         if hour_03_count == 8:
                             # Expected case: 8 records (4 for each occurrence)
-                            logger.info("Processing 8 records for repeated hour 03:00 (4+4)")
+                            logger.info(
+                                "Processing 8 records for repeated hour 03:00 (returned as pairs)"
+                            )
 
-                            for idx, item in enumerate(items):
-                                # First 4 records: fold=0, next 4 records: fold=1
-                                fold = 0 if idx < 4 else 1
-                                timestamp = parse_timestamp_with_dst_handling(
-                                    item["timestamp_str"],
-                                    target_date,
-                                    occurrence=fold,
-                                    tz=FINNISH_TIMEZONE,
-                                )
+                            # Group by minute to process pairs correctly
+                            by_minute = defaultdict(list)
+                            for item in items:
+                                minute = item["naive_dt"].minute
+                                by_minute[minute].append(item)
 
-                                readings.append(
-                                    {
-                                        "timestamp": timestamp,
-                                        "consumption_kwh": item["consumption"],
-                                        "consumption_wh": item["consumption"] * 1000,
-                                        "unit": item["unit"],
-                                    }
-                                )
+                            # Process each minute's pair
+                            for minute in sorted(by_minute.keys()):
+                                minute_items = by_minute[minute]
 
-                                logger.debug(
-                                    f"  Record {idx + 1}/8: fold={fold}, "
-                                    f"UTC={timestamp.astimezone(ZoneInfo('UTC')).isoformat()}, "
-                                    f"consumption={item['consumption']} kWh"
-                                )
+                                if len(minute_items) != 2:
+                                    logger.warning(
+                                        f"Expected 2 records for 03:{minute:02d}, "
+                                        f"got {len(minute_items)}"
+                                    )
+
+                                # Process each occurrence
+                                for idx, item in enumerate(minute_items):
+                                    # idx 0 = first occurrence (fold=0, EEST, UTC+3)
+                                    # idx 1 = second occurrence (fold=1, EET, UTC+2)
+                                    fold = idx
+                                    timestamp = parse_timestamp_with_dst_handling(
+                                        item["timestamp_str"],
+                                        target_date,
+                                        occurrence=fold,
+                                        tz=FINNISH_TIMEZONE,
+                                    )
+
+                                    readings.append(
+                                        {
+                                            "timestamp": timestamp,
+                                            "consumption_kwh": item["consumption"],
+                                            "consumption_wh": item["consumption"] * 1000,
+                                            "unit": item["unit"],
+                                        }
+                                    )
+
+                                    logger.debug(
+                                        f"  03:{minute:02d} occurrence {idx + 1}: "
+                                        f"fold={fold}, "
+                                        f"UTC={timestamp.astimezone(ZoneInfo('UTC')).isoformat()}, "
+                                        f"consumption={item['consumption']:.3f} kWh"
+                                    )
 
                         elif hour_03_count == 4:
                             # Unexpected case: only 4 records (might be missing one occurrence)

@@ -52,3 +52,4 @@ Thumbs.db
 # InfluxDB data (local)
 influxdb-data/
 
+dst_api_response.json
