@@ -10,7 +10,8 @@ import argparse
 import logging
 import os
 import sys
-from datetime import datetime, timedelta
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -34,6 +35,140 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+# Cache for DST transition detection to avoid repeated calculations
+_dst_transition_cache: dict[tuple[date, str], tuple[str | None, datetime | None]] = {}
+
+
+def is_dst_transition_day(
+    target_date: date, tz_name: str = "Europe/Helsinki"
+) -> tuple[str | None, datetime | None]:
+    """
+    Detect if a date is a DST transition day in the specified timezone.
+
+    In Finland (Europe/Helsinki):
+    - Spring: Last Sunday of March at 03:00 EET → 04:00 EEST (23-hour day)
+    - Fall: Last Sunday of October at 04:00 EEST → 03:00 EET (25-hour day)
+
+    Args:
+        target_date: The date to check
+        tz_name: The timezone name (default: Europe/Helsinki)
+
+    Returns:
+        Tuple of (transition_type, transition_datetime):
+        - transition_type: 'spring', 'fall', or None
+        - transition_datetime: The local time when transition occurs, or None
+    """
+    # Check cache first
+    cache_key = (target_date, tz_name)
+    if cache_key in _dst_transition_cache:
+        return _dst_transition_cache[cache_key]
+
+    tz = ZoneInfo(tz_name)
+    year = target_date.year
+    result = (None, None)
+
+    # Find last Sunday of March (spring transition)
+    for day in range(31, 24, -1):
+        try:
+            dt = datetime(year, 3, day, tzinfo=tz)
+            if dt.weekday() == 6:  # Sunday
+                if dt.date() == target_date:
+                    # Spring transition: clocks go forward at 03:00 EET
+                    transition_time = datetime(year, 3, day, 3, 0, 0, tzinfo=tz)
+                    logger.info(f"Detected spring DST transition day: {target_date}")
+                    result = ("spring", transition_time)
+                break
+        except ValueError:
+            continue
+
+    # Find last Sunday of October (fall transition)
+    if result == (None, None):
+        for day in range(31, 24, -1):
+            try:
+                dt = datetime(year, 10, day, tzinfo=tz)
+                if dt.weekday() == 6:  # Sunday
+                    if dt.date() == target_date:
+                        # Fall transition: clocks go back at 04:00 EEST → 03:00 EET
+                        # The repeated hour is 03:00-03:59
+                        transition_time = datetime(year, 10, day, 3, 0, 0, tzinfo=tz, fold=0)
+                        logger.info(f"Detected fall DST transition day: {target_date}")
+                        result = ("fall", transition_time)
+                    break
+            except ValueError:
+                continue
+
+    # Cache the result
+    _dst_transition_cache[cache_key] = result
+    return result
+
+
+def parse_timestamp_with_dst_handling(
+    timestamp_str: str,
+    target_date: date,
+    occurrence: int = 0,
+    tz: ZoneInfo = FINNISH_TIMEZONE,
+) -> datetime:
+    """
+    Parse timestamp string to datetime, handling DST transitions correctly.
+
+    During fall DST transition, the hour 03:00-03:59 occurs twice. This
+    function uses the 'fold' parameter to disambiguate:
+    - fold=0: First occurrence (before transition, EEST, UTC+3)
+    - fold=1: Second occurrence (after transition, EET, UTC+2)
+
+    Args:
+        timestamp_str: ISO format timestamp string
+        target_date: The date this timestamp belongs to (for DST detection)
+        occurrence: Which occurrence of an ambiguous time (0=first, 1=second)
+        tz: The timezone to use if none is specified
+
+    Returns:
+        Timezone-aware datetime object
+    """
+    # Remove 'Z' suffix if present
+    if timestamp_str.endswith("Z"):
+        timestamp_str = timestamp_str[:-1]
+
+    # Parse the timestamp
+    dt = datetime.fromisoformat(timestamp_str)
+
+    # If already has timezone info, convert to target timezone
+    if dt.tzinfo is not None:
+        return dt.astimezone(tz)
+
+    # Check if this is a DST transition day
+    transition_type, transition_time = is_dst_transition_day(target_date, tz.key)
+
+    if transition_type == "fall":
+        # During fall transition, hour 03:00-03:59 is ambiguous
+        # Use fold parameter to disambiguate
+        hour = dt.hour
+        if hour == 3:
+            # This is the repeated hour - use fold to disambiguate
+            dt = dt.replace(tzinfo=tz, fold=occurrence)
+            logger.debug(
+                f"Parsed ambiguous time {timestamp_str} as fold={occurrence} "
+                f"(UTC: {dt.astimezone(ZoneInfo('UTC')).isoformat()})"
+            )
+        else:
+            dt = dt.replace(tzinfo=tz)
+    elif transition_type == "spring":
+        # During spring transition, hour 03:00-03:59 doesn't exist
+        # If we encounter it, log a warning
+        hour = dt.hour
+        if hour == 3:
+            logger.warning(
+                f"Timestamp {timestamp_str} falls in non-existent hour "
+                f"during spring DST transition on {target_date}"
+            )
+        dt = dt.replace(tzinfo=tz)
+    else:
+        # Normal day - no special handling
+        dt = dt.replace(tzinfo=tz)
+
+    return dt
 
 
 def load_config() -> dict:
@@ -198,7 +333,16 @@ def fetch_consumption_data(
 
 
 def parse_consumption_data(api_response: dict) -> list[dict]:
-    """Parse consumption data from API response."""
+    """
+    Parse consumption data from API response, handling DST transitions.
+
+    During fall DST transitions, the API may return data for the repeated
+    hour twice. This function correctly handles the ambiguous timestamps by:
+    1. Grouping data by date
+    2. Detecting DST transition days
+    3. Tracking which occurrence of the repeated hour we're processing
+    4. Using the 'fold' parameter to disambiguate timestamps
+    """
     try:
         result = api_response.get("getconsumptionsresult", {})
         consumption_data = result.get("consumptiondata", {})
@@ -206,32 +350,211 @@ def parse_consumption_data(api_response: dict) -> list[dict]:
         values = timeseries.get("values", {})
         tsv_data = values.get("tsv", [])
 
-        readings = []
+        if not tsv_data:
+            return []
+
+        # First pass: group raw data by date and local hour to detect duplicates
+        data_by_date = defaultdict(lambda: defaultdict(list))
+
         for item in tsv_data:
             timestamp_str = item.get("time", "")
             consumption = item.get("quantity")
 
             if timestamp_str and consumption is not None:
-                # Remove 'Z' suffix if present
+                # Parse as naive datetime first to get the date
                 if timestamp_str.endswith("Z"):
-                    timestamp_str = timestamp_str[:-1]
-
-                timestamp = datetime.fromisoformat(timestamp_str)
-                if timestamp.tzinfo is None:
-                    timestamp = timestamp.replace(tzinfo=FINNISH_TIMEZONE)
+                    ts_clean = timestamp_str[:-1]
                 else:
-                    timestamp = timestamp.astimezone(FINNISH_TIMEZONE)
+                    ts_clean = timestamp_str
 
-                consumption_kwh = float(consumption)
-                readings.append(
+                dt_naive = datetime.fromisoformat(ts_clean)
+                dt_date = dt_naive.date()
+                hour = dt_naive.hour
+
+                data_by_date[dt_date][hour].append(
                     {
-                        "timestamp": timestamp,
-                        "consumption_kwh": consumption_kwh,
-                        "consumption_wh": consumption_kwh * 1000,  # Convert kWh to Wh
+                        "timestamp_str": timestamp_str,
+                        "consumption": float(consumption),
                         "unit": item.get("unit", "kWh"),
+                        "naive_dt": dt_naive,
                     }
                 )
 
+        # Second pass: process data with DST awareness
+        readings = []
+
+        for target_date in sorted(data_by_date.keys()):
+            transition_type, _ = is_dst_transition_day(target_date)
+
+            if transition_type == "fall":
+                # Fall DST transition: hour 03:00 occurs twice
+                logger.info(
+                    f"Processing fall DST transition day {target_date} (hour 03:00 repeats)"
+                )
+
+                # Track hour 03:00 occurrences separately
+                hour_03_count = len(data_by_date[target_date].get(3, []))
+
+                logger.info(
+                    f"Found {hour_03_count} records for hour 03:00 on {target_date}"
+                )
+
+                for hour in sorted(data_by_date[target_date].keys()):
+                    items = data_by_date[target_date][hour]
+
+                    if hour == 3:
+                        # Process repeated hour with correct fold values
+                        # The API should return these in chronological order:
+                        # - First 4 records: fold=0 (EEST, UTC+3, before transition)
+                        # - Next 4 records: fold=1 (EET, UTC+2, after transition)
+
+                        if hour_03_count == 8:
+                            # Expected case: 8 records (4 for each occurrence)
+                            logger.info("Processing 8 records for repeated hour 03:00 (4+4)")
+
+                            for idx, item in enumerate(items):
+                                # First 4 records: fold=0, next 4 records: fold=1
+                                fold = 0 if idx < 4 else 1
+                                timestamp = parse_timestamp_with_dst_handling(
+                                    item["timestamp_str"],
+                                    target_date,
+                                    occurrence=fold,
+                                    tz=FINNISH_TIMEZONE,
+                                )
+
+                                readings.append(
+                                    {
+                                        "timestamp": timestamp,
+                                        "consumption_kwh": item["consumption"],
+                                        "consumption_wh": item["consumption"] * 1000,
+                                        "unit": item["unit"],
+                                    }
+                                )
+
+                                logger.debug(
+                                    f"  Record {idx + 1}/8: fold={fold}, "
+                                    f"UTC={timestamp.astimezone(ZoneInfo('UTC')).isoformat()}, "
+                                    f"consumption={item['consumption']} kWh"
+                                )
+
+                        elif hour_03_count == 4:
+                            # Unexpected case: only 4 records (might be missing one occurrence)
+                            logger.warning(
+                                f"Only 4 records found for repeated hour 03:00 on {target_date}. "
+                                f"Expected 8 records (4 for each occurrence). "
+                                f"Data may be incomplete!"
+                            )
+
+                            # Process with fold=0 (first occurrence)
+                            for item in items:
+                                timestamp = parse_timestamp_with_dst_handling(
+                                    item["timestamp_str"],
+                                    target_date,
+                                    occurrence=0,
+                                    tz=FINNISH_TIMEZONE,
+                                )
+
+                                readings.append(
+                                    {
+                                        "timestamp": timestamp,
+                                        "consumption_kwh": item["consumption"],
+                                        "consumption_wh": item["consumption"] * 1000,
+                                        "unit": item["unit"],
+                                    }
+                                )
+
+                        else:
+                            # Unexpected count
+                            logger.warning(
+                                f"Unexpected record count for hour 03:00 on {target_date}: "
+                                f"{hour_03_count} records (expected 8 or 4)"
+                            )
+
+                            # Process with fold=0 by default
+                            for item in items:
+                                timestamp = parse_timestamp_with_dst_handling(
+                                    item["timestamp_str"],
+                                    target_date,
+                                    occurrence=0,
+                                    tz=FINNISH_TIMEZONE,
+                                )
+
+                                readings.append(
+                                    {
+                                        "timestamp": timestamp,
+                                        "consumption_kwh": item["consumption"],
+                                        "consumption_wh": item["consumption"] * 1000,
+                                        "unit": item["unit"],
+                                    }
+                                )
+
+                    else:
+                        # Normal hour - no ambiguity
+                        for item in items:
+                            timestamp = parse_timestamp_with_dst_handling(
+                                item["timestamp_str"],
+                                target_date,
+                                occurrence=0,
+                                tz=FINNISH_TIMEZONE,
+                            )
+
+                            readings.append(
+                                {
+                                    "timestamp": timestamp,
+                                    "consumption_kwh": item["consumption"],
+                                    "consumption_wh": item["consumption"] * 1000,
+                                    "unit": item["unit"],
+                                }
+                            )
+
+            elif transition_type == "spring":
+                # Spring DST transition: hour 03:00 doesn't exist (clocks jump forward)
+                logger.info(
+                    f"Processing spring DST transition day {target_date} "
+                    f"(hour 03:00 doesn't exist, 23-hour day)"
+                )
+
+                # Check if we have data for the missing hour
+                if 3 in data_by_date[target_date]:
+                    logger.warning(
+                        f"Found {len(data_by_date[target_date][3])} records for "
+                        f"non-existent hour 03:00 on spring DST transition {target_date}"
+                    )
+
+                # Process all hours normally
+                for hour in sorted(data_by_date[target_date].keys()):
+                    for item in data_by_date[target_date][hour]:
+                        timestamp = parse_timestamp_with_dst_handling(
+                            item["timestamp_str"], target_date, occurrence=0, tz=FINNISH_TIMEZONE
+                        )
+
+                        readings.append(
+                            {
+                                "timestamp": timestamp,
+                                "consumption_kwh": item["consumption"],
+                                "consumption_wh": item["consumption"] * 1000,
+                                "unit": item["unit"],
+                            }
+                        )
+
+            else:
+                # Normal day - no DST transition
+                for hour in sorted(data_by_date[target_date].keys()):
+                    for item in data_by_date[target_date][hour]:
+                        timestamp = parse_timestamp_with_dst_handling(
+                            item["timestamp_str"], target_date, occurrence=0, tz=FINNISH_TIMEZONE
+                        )
+
+                        readings.append(
+                            {
+                                "timestamp": timestamp,
+                                "consumption_kwh": item["consumption"],
+                                "consumption_wh": item["consumption"] * 1000,
+                                "unit": item["unit"],
+                            }
+                        )
+
+        logger.info(f"Parsed {len(readings)} total records from API response")
         return readings
 
     except (KeyError, ValueError, TypeError) as e:

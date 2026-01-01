@@ -7,6 +7,7 @@ A CLI application that syncs electricity consumption data from WattiVahti API to
 - **Incremental Sync**: Automatically queries InfluxDB for the latest timestamp and syncs new data
 - **Manual Date Range Sync**: Sync specific time periods with `--start-date` and `--end-date` arguments
 - **Automatic Resolution Detection**: Tries PT15MIN first, falls back to PT1H for historical data
+- **DST Transition Handling**: Correctly handles Daylight Saving Time transitions (spring/fall)
 - **Token Management**: Automatically updates refresh tokens when rotated
 - **Docker Compose Setup**: Local InfluxDB development environment
 
@@ -128,6 +129,29 @@ This runs the sync every hour. The script automatically handles incremental sync
 2. If no data is returned, automatically retries with `PT1H` resolution (1 hour)
 3. Stores the actual resolution used in each record
 4. Handles the transition from PT1H to PT15MIN automatically without hardcoded dates
+
+### DST Transition Handling
+
+The sync script correctly handles Daylight Saving Time (DST) transitions in Finland:
+
+**Fall DST (Last Sunday of October)**:
+- Clocks go back 1 hour (04:00 EEST → 03:00 EET)
+- Creates a 25-hour day where hour 03:00 occurs twice
+- The script correctly processes both occurrences using Python's `fold` parameter
+- Stores 100 records (25 hours × 4 periods) instead of 96
+
+**Spring DST (Last Sunday of March)**:
+- Clocks go forward 1 hour (03:00 EET → 04:00 EEST)
+- Creates a 23-hour day where hour 03:00 doesn't exist
+- The script handles the missing hour gracefully
+- Stores 92 records (23 hours × 4 periods) instead of 96
+
+All timestamps are stored in UTC in InfluxDB to avoid ambiguity.
+
+For detailed information about the DST fix, see:
+- `DST_FIX_SUMMARY.md` - Quick reference and implementation summary
+- `DST_FIX_DOCUMENTATION.md` - Detailed technical documentation
+- `test_dst_fix.py` - Test suite to verify DST handling
 
 ### Token Management
 
