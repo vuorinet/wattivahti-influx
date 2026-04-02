@@ -92,7 +92,7 @@ jobs:
           chmod +x "$DEPLOY_PATH/run_sync.sh"
 
           # Create short cron job entry
-          CRON_ENTRY="0 * * * * $DEPLOY_PATH/run_sync.sh"
+          CRON_ENTRY="*/30 * * * * $DEPLOY_PATH/run_sync.sh"
 
           # Check if cron job already exists
           if crontab -l 2>/dev/null | grep -q "run_sync.sh"; then

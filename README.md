@@ -102,14 +102,14 @@ The project includes a GitHub Actions workflow (`.github/workflows/deploy.yml`) 
 1. Builds and tests the application
 2. Deploys to target server via self-hosted runner
 3. Populates `.env` file from GitHub Environment secrets
-4. Sets up cron job to run hourly
+4. Sets up cron job to run every 30 minutes
 
 ### Setting Up Cron Job
 
 For manual setup, add to crontab:
 
 ```bash
-0 * * * * cd /path/to/wattivahti-influx && uv run sync.py
+*/30 * * * * cd /path/to/wattivahti-influx && uv run sync.py
 ```
 
 This runs the sync every hour. The script automatically handles incremental syncing.
