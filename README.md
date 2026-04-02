@@ -52,9 +52,18 @@ Required configuration:
 - `WATTIVAHTI_METERING_POINT`: Your 7-digit metering point code
 - Other values have sensible defaults
 
-### 5. Set Up Refresh Token
+### 5. Obtain Refresh Token
 
-Create `refresh_token.txt` (or path specified by `REFRESH_TOKEN_FILE`) and write your WattiVahti refresh token to it.
+Run `get_token.py` with your WattiVahti credentials to perform a one-time login and save the refresh token automatically:
+
+```bash
+WATTIVAHTI_USERNAME=user@example.com WATTIVAHTI_PASSWORD=secret uv run get_token.py
+```
+
+This writes the token to `refresh_token.txt` (or the path in `REFRESH_TOKEN_FILE`).
+Credentials are read only from environment variables and are never written to any file.
+
+Re-run `get_token.py` if the stored token expires and the sync can no longer authenticate.
 
 ### 6. Run Sync
 
@@ -78,6 +87,8 @@ uv run sync.py --start-date 2024-01-01T00:00:00 --end-date 2024-01-31T23:59:59
 - `INFLUXDB_ORG` - InfluxDB organization (default: `wattivahti`)
 - `INFLUXDB_BUCKET` - InfluxDB bucket name (default: `electricity`)
 - `WATTIVAHTI_METERING_POINT` - 7-digit metering point code (required)
+- `WATTIVAHTI_USERNAME` - WattiVahti account email (required by `get_token.py` only)
+- `WATTIVAHTI_PASSWORD` - WattiVahti account password (required by `get_token.py` only)
 - `REFRESH_TOKEN_FILE` - Path to refresh token file (default: `refresh_token.txt`)
 - `INITIAL_SYNC_DAYS` - Days to fetch on first run (default: `7`)
 - `SYNC_BUFFER_HOURS` - Hours before latest timestamp to include (default: `2`)
@@ -155,16 +166,13 @@ For detailed information about the DST fix, see:
 
 ### Token Management
 
-- Initial refresh token is written manually to the file
-- If token is rotated during authentication, the new token is automatically saved
-- Clear error messages if token file is missing or expired
+- `get_token.py` performs a one-time Azure B2C PKCE login to create the initial token file
+- If the token is rotated during authentication, `sync.py` saves the new token automatically
+- If the token expires entirely, re-run `get_token.py` to obtain a fresh one
 
 ## Error Handling
 
-If the refresh token file is missing or expired, you'll see a clear error message indicating:
-- The exact file path where the token should be written
-- What needs to be written there
-- Instructions on how to obtain the refresh token
+If the refresh token file is missing or the token has expired beyond renewal, `sync.py` prints a clear error with the expected file path. Run `get_token.py` to recover.
 
 ## Toolchain
 

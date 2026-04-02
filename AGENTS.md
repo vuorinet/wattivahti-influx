@@ -21,6 +21,7 @@ This project does **not** use traditional Python tooling:
 ## Usage
 
 - Install dependencies: `uv sync`
+- Obtain initial refresh token: `WATTIVAHTI_USERNAME=… WATTIVAHTI_PASSWORD=… uv run get_token.py`
 - Run application: `uv run sync.py`
 - Lint code: `uv run ruff check .`
 - Format code: `uv run ruff format .`

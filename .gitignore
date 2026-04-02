@@ -53,3 +53,4 @@ Thumbs.db
 influxdb-data/
 
 dst_api_response.json
+.playwright-mcp
